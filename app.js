@@ -7,7 +7,7 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
 const SIMPLE_MAX = 4 * 1024 * 1024;
 const CHUNK = 320 * 1024 * 16;
 const ROOT = { id: 'root', name: 'OneDrive', driveId: null };
-const LS = { token: 'cd.mstoken', root: 'cd.msroot', mem: 'cd.msmemory', opts: 'cd.options', cid: 'cd.msClientId' };
+const LS = { token: 'cd.mstoken', root: 'cd.msroot', mem: 'cd.msmemory', opts: 'cd.options', cid: 'cd.msClientId', manual: 'cd.manualAccount' };
 const PROP = 'cdFiled';
 const CAT_PREFIX = 'Classé - ';
 const GENERIC_FOLDERS = new Set(['correspondance', 'correspondances', 'courrier', 'courriers', 'mails', 'emails', 'e-mails',
@@ -99,6 +99,7 @@ function canTag() { return Office.context.requirements.isSetSupported('Mailbox',
 function bindUI() {
   $('btnConnect').addEventListener('click', connect);
   $('btnLogout').addEventListener('click', logout);
+  $('btnAuto').addEventListener('click', useOutlookAccount);
   $('btnSave').addEventListener('click', save);
   $('btnNewFolder').addEventListener('click', () => { show('newFolderRow', true); $('newFolderName').focus(); });
   $('btnCreate').addEventListener('click', createFolderHere);
@@ -204,6 +205,7 @@ function hasToken(marginMs = 60000) { return !!state.token && state.tokenExp > D
 // Authentification imbriquée (NAA) : Outlook fournit le jeton sans fenêtre quand c'est possible.
 async function initMsal() {
   if (state.pca || !clientId()) return;
+  if (lsGet(LS.manual, false)) return;
   if (Office.context.requirements.isSetSupported('NestedAppAuth', '1.1') && msal.createNestablePublicClientApplication) {
     try {
       state.pca = await msal.createNestablePublicClientApplication({ auth: { clientId: clientId(), authority: CONFIG.AUTHORITY } });
@@ -215,7 +217,7 @@ async function initMsal() {
 async function startAuth() {
   await initMsal();
   try { await getToken(false); onConnected(); }
-  catch (e) { show('auth', true); }
+  catch (e) { show('auth', true); show('autoRow', lsGet(LS.manual, false)); }
 }
 
 async function getToken(interactive) {
@@ -280,11 +282,26 @@ async function connect() {
   }
 }
 
+// Changer de compte : on quitte la connexion automatique d'Outlook et on passe par la fenêtre
+// de connexion, qui propose le choix du compte. Le dossier racine et les suggestions apprises
+// appartenaient à l'ancien OneDrive : ils sont réinitialisés.
 function logout() {
   state.token = null; state.tokenExp = 0; state.email = ''; state.connected = false;
   lsSet(LS.token, null);
+  lsSet(LS.manual, true);
+  state.pca = null; state.naa = false;
+  state.root = ROOT; state.path = [ROOT];
+  lsSet(LS.root, null); lsSet(LS.mem, {});
+  $('suggest').innerHTML = '';
+  show('autoRow', true);
   show('account', false); show('pick', false); show('auth', true);
   selectDest(null);
+}
+
+async function useOutlookAccount() {
+  lsSet(LS.manual, false);
+  show('autoRow', false);
+  await connect();
 }
 
 async function onConnected() {

@@ -12,7 +12,7 @@
 <body>
 <header class="top">
   <h1>Classer dans OneDrive</h1>
-  <div id="account" class="account hidden"><span id="accountEmail"></span> <button id="btnLogout" class="link">Déconnecter</button></div>
+  <div id="account" class="account hidden"><span id="accountEmail"></span> <button id="btnLogout" class="link">Changer de compte</button></div>
 </header>
 
 <section id="empty" class="pad hidden"><p class="muted">Sélectionne un mail pour le classer.</p></section>
@@ -45,6 +45,7 @@
       <p class="muted small">URI de redirection à déclarer (plateforme « Application monopage ») :<br><code id="redirect1"></code><br><code id="redirect2"></code></p>
     </div>
     <button id="btnConnect" class="primary">Connecter OneDrive</button>
+    <p id="autoRow" class="small hidden">Une fenêtre te laissera choisir le compte. <button id="btnAuto" class="link">Utiliser plutôt le compte d'Outlook</button></p>
   </section>
 
   <section id="pick" class="block hidden">
