@@ -131,7 +131,7 @@ function cleanSubject(s) {
 function isoDate(d) {
   d = d instanceof Date ? d : new Date(d || Date.now());
   const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return `${String(d.getFullYear()).slice(-2)}${p(d.getMonth() + 1)}${p(d.getDate())}`; // AAMMJJ
 }
 
 function sanitize(name) {
