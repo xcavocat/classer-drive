@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Connexion Microsoft</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="config.js"></script>
+<script src="assets/msal-browser.min.js"></script>
+<style>body{font-family:"Segoe UI",system-ui,sans-serif;color:#1f2a44;padding:24px;font-size:14px}</style>
+</head>
+<body>
+<p id="msg">Connexion à Microsoft...</p>
+<script>
+Office.onReady(async function () {
+  var q = new URLSearchParams(location.search);
+  if (q.get("cid")) sessionStorage.setItem("cd.cid", q.get("cid"));
+  var cid = sessionStorage.getItem("cd.cid") || CONFIG.CLIENT_ID;
+  try {
+    var pca = new msal.PublicClientApplication({
+      auth: { clientId: cid, authority: CONFIG.AUTHORITY, redirectUri: location.origin + location.pathname },
+      cache: { cacheLocation: "sessionStorage" }
+    });
+    await pca.initialize();
+    var r = await pca.handleRedirectPromise();
+    if (r && r.accessToken) {
+      document.getElementById("msg").textContent = "Connexion réussie.";
+      Office.context.ui.messageParent(JSON.stringify({
+        token: r.accessToken,
+        exp: r.expiresOn ? new Date(r.expiresOn).getTime() : Date.now() + 3300000
+      }));
+      return;
+    }
+    await pca.loginRedirect({ scopes: CONFIG.SCOPES, prompt: "select_account" });
+  } catch (e) {
+    Office.context.ui.messageParent(JSON.stringify({ error: (e && (e.errorMessage || e.message)) || String(e) }));
+  }
+});
+</script>
+</body>
+</html>
