@@ -9,32 +9,13 @@ const CHUNK = 320 * 1024 * 16;
 const ROOT = { id: 'root', name: 'OneDrive', driveId: null };
 const LS = { token: 'cd.mstoken', root: 'cd.msroot', mem: 'cd.msmemory', opts: 'cd.options', cid: 'cd.msClientId', manual: 'cd.manualAccount' };
 const PROP = 'cdFiled';
-const CAT_PREFIX = 'Classé - ';
-const GENERIC_FOLDERS = new Set(['correspondance', 'correspondances', 'courrier', 'courriers', 'mails', 'emails', 'e-mails',
-  'pieces', 'pièces', 'procedure', 'procédure', 'factures', 'facturation', 'divers', 'echanges', 'échanges', 'notes',
-  'docs', 'documents', 'admin', 'administratif', 'client', 'adversaire', 'juridiction', 'actes', 'ecritures', 'écritures']);
+const CAT_NAME = 'Classé';
 const OPTS = ['optEml', 'optPdf', 'optPrefix', 'optSub', 'optTag'];
-
-const GENERIC_DOMAINS = new Set([
-  'gmail.com', 'googlemail.com', 'outlook.com', 'outlook.fr', 'hotmail.com', 'hotmail.fr', 'live.com', 'live.fr',
-  'msn.com', 'yahoo.com', 'yahoo.fr', 'icloud.com', 'me.com', 'orange.fr', 'wanadoo.fr', 'free.fr', 'sfr.fr',
-  'laposte.net', 'neuf.fr', 'bbox.fr', 'aol.com', 'protonmail.com', 'proton.me'
-]);
-
-const STOPWORDS = new Set((
-  'objet dossier dossiers affaire suite votre votres notre notres vous nous pour avec dans sans sous chez entre ' +
-  'demande concernant relatif relative relatifs madame monsieur maitre maître cher chère bonjour merci cordialement ' +
-  'document documents piece pièce pieces pièces jointe jointes copie envoi information informations ' +
-  'mail email courriel message reponse réponse urgent important rappel transfert fwd forward ' +
-  'cette celle celui leurs leur mais donc ainsi plus moins tres très bien être avoir fait faire ' +
-  'janvier fevrier février mars avril juin juillet aout août septembre octobre novembre decembre décembre ' +
-  'lundi mardi mercredi jeudi vendredi samedi dimanche the and for your with from this that'
-).split(/\s+/));
 
 const state = {
   item: null, token: null, tokenExp: 0, email: '',
   root: null, path: [], dest: null, currentList: [],
-  pca: null, naa: false, searchTimer: null, busy: false, suggestRun: 0
+  pca: null, naa: false, searchTimer: null, busy: false
 };
 
 const $ = (id) => document.getElementById(id);
@@ -107,7 +88,6 @@ function bindUI() {
   $('btnSetRoot').addEventListener('click', setRoot);
   $('search').addEventListener('input', onSearchInput);
   $('folders').addEventListener('click', onFolderClick);
-  $('suggest').addEventListener('click', onSuggestClick);
   $('crumbs').addEventListener('click', onCrumbClick);
   OPTS.forEach((id) => $(id).addEventListener('change', saveOptions));
 }
@@ -135,7 +115,6 @@ function loadItem() {
   show('empty', false); show('main', true); show('footer', true);
   renderMail();
   renderFiled();
-  if (state.connected) computeSuggestions();
 }
 
 function correspondent(item) {
@@ -283,16 +262,15 @@ async function connect() {
 }
 
 // Changer de compte : on quitte la connexion automatique d'Outlook et on passe par la fenêtre
-// de connexion, qui propose le choix du compte. Le dossier racine et les suggestions apprises
-// appartenaient à l'ancien OneDrive : ils sont réinitialisés.
+// de connexion, qui propose le choix du compte. Le dossier racine appartenait à l'ancien
+// OneDrive : il est réinitialisé.
 function logout() {
   state.token = null; state.tokenExp = 0; state.email = ''; state.connected = false;
   lsSet(LS.token, null);
   lsSet(LS.manual, true);
   state.pca = null; state.naa = false;
   state.root = ROOT; state.path = [ROOT];
-  lsSet(LS.root, null); lsSet(LS.mem, {});
-  $('suggest').innerHTML = '';
+  lsSet(LS.root, null);
   show('autoRow', true);
   show('account', false); show('pick', false); show('auth', true);
   selectDest(null);
@@ -314,7 +292,6 @@ async function onConnected() {
     show('account', !!state.email);
   } catch (e) { handleError(e); return; }
   openPath(state.path.length ? state.path : [state.root]);
-  if (state.item) computeSuggestions();
 }
 
 /* ---------- Appels Microsoft Graph (OneDrive) ---------- */
@@ -502,6 +479,7 @@ function onSearchInput() {
   const text = $('search').value.trim();
   state.searchTimer = setTimeout(async () => {
     if (!text) { openPath(state.path); return; }
+    if (/^https?:\/\//i.test(text)) { openLink(text); return; }
     $('folders').innerHTML = '<li class="info">Recherche...</li>';
     try {
       const res = await searchFolders(text);
@@ -542,115 +520,55 @@ function selectDest(f) {
     const lf = li.dataset.current ? state.path[state.path.length - 1] : state.currentList[Number(li.dataset.i)];
     li.classList.toggle('sel', !!(state.dest && lf && lf.id === state.dest.id));
   });
-  document.querySelectorAll('#suggest .sugg').forEach((b) => b.classList.toggle('sel', !!(state.dest && b.dataset.id === state.dest.id)));
 }
 
-/* ---------- Suggestions et mémoire ---------- */
 
-function memoryKeys(item) {
-  const keys = [];
-  if (item.conversationId) keys.push(['conv:' + item.conversationId, 10, 'même conversation']);
-  const who = correspondent(item);
-  const email = (who.emailAddress || '').toLowerCase();
-  if (email) {
-    keys.push(['mail:' + email, 4, 'même correspondant']);
-    const dom = email.split('@')[1];
-    const myDom = ((Office.context.mailbox.userProfile.emailAddress || '').split('@')[1] || '').toLowerCase();
-    if (dom && !GENERIC_DOMAINS.has(dom) && dom !== myDom) keys.push(['dom:' + dom, 2, 'même organisation']);
-  }
-  return keys;
+/* ---------- Dossier désigné par un lien OneDrive collé ---------- */
+
+function shareId(url) {
+  const b64 = btoa(unescape(encodeURIComponent(url))).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
+  return 'u!' + b64;
 }
 
-function remember(item, dest) {
-  const mem = lsGet(LS.mem, {});
-  const now = Date.now();
-  for (const [k] of memoryKeys(item)) {
-    const list = mem[k] || [];
-    const e = list.find((x) => x.id === dest.id);
-    if (e) { e.n++; e.t = now; e.name = dest.name; } else list.unshift({ id: dest.id, name: dest.name, driveId: dest.driveId, parentName: dest.parentName, webUrl: dest.webUrl, n: 1, t: now });
-    list.sort((a, b) => b.t - a.t);
-    mem[k] = list.slice(0, 5);
-  }
-  const keys = Object.keys(mem);
-  if (keys.length > 1500) {
-    keys.sort((a, b) => Math.max(...mem[a].map((x) => x.t)) - Math.max(...mem[b].map((x) => x.t)));
-    keys.slice(0, 300).forEach((k) => delete mem[k]);
-  }
-  lsSet(LS.mem, mem);
-}
-
-function keywords(item) {
-  const who = correspondent(item);
-  const text = cleanSubject(item.subject) + ' ' + (who.displayName || '');
-  const seen = new Set();
-  const out = [];
-  for (const raw of text.split(/[^\p{L}\p{N}]+/u)) {
-    const t = raw.trim();
-    const low = t.toLowerCase();
-    if (!t || seen.has(low) || STOPWORDS.has(low)) continue;
-    const isAcronym = /^\p{Lu}{2,}$/u.test(t);
-    if (!isAcronym && t.length < 4) continue;
-    if (/^\d+$/.test(t) && t.length < 4) continue;
-    seen.add(low);
-    const weight = isAcronym ? 3 : /^\p{Lu}/u.test(t) ? 2 : 1;
-    out.push({ t, weight });
-  }
-  return out.sort((a, b) => b.weight - a.weight).map((x) => x.t);
-}
-
-async function computeSuggestions() {
-  const item = state.item;
-  const run = ++state.suggestRun;
-  const box = $('suggest');
-  box.innerHTML = '<p class="muted small">Recherche de suggestions...</p>';
-
-  const scores = new Map();
-  const add = (f, pts, why) => {
-    const e = scores.get(f.id) || { f, score: 0, why: new Set() };
-    e.score += pts; e.why.add(why);
-    scores.set(f.id, e);
-  };
-
-  const mem = lsGet(LS.mem, {});
-  for (const [k, pts, why] of memoryKeys(item)) {
-    for (const m of (mem[k] || [])) add({ id: m.id, name: m.name, driveId: m.driveId, parentName: m.parentName, webUrl: m.webUrl }, pts * Math.min(m.n, 5), why);
-  }
-
-  try {
-    const toks = keywords(item).slice(0, 6);
-    const results = await Promise.all(toks.map((t) => searchFolders(t, 15).catch((e) => { if (e instanceof AuthError) throw e; return []; })));
-    results.forEach((fs, i) => fs.forEach((f) => add(f, 3, 'mot « ' + toks[i] + ' »')));
-  } catch (e) {
-    if (run === state.suggestRun) handleError(e);
-    return;
-  }
-  if (run !== state.suggestRun) return;
-
-  const top = [...scores.values()].sort((a, b) => b.score - a.score).slice(0, 5);
-  if (!top.length) { box.innerHTML = '<p class="muted small">Pas de suggestion : cherche ou parcours tes dossiers.</p>'; return; }
-
-  state.suggestions = top.map((e) => e.f);
-  box.innerHTML = top.map((e, i) =>
-    `<button class="sugg" data-i="${i}" data-id="${escHtml(e.f.id)}">${escHtml(e.f.name)}<span class="why" data-why="${i}">${escHtml([...e.why].join(', '))}</span></button>`).join('');
-
-  const best = top[0];
-  if (!state.dest && (best.why.has('même conversation') || best.why.has('même correspondant'))) selectDest(best.f);
-  else selectDest(state.dest);
-
-  for (let i = 0; i < top.length; i++) {
+async function resolveLink(raw) {
+  const attempts = [];
+  let u = null;
+  try { u = new URL(raw); } catch (e) { throw new Error('Lien illisible.'); }
+  const id = u.searchParams.get('id');
+  const cid = u.searchParams.get('cid');
+  // OneDrive personnel : ...onedrive.live.com/?id=XXX!123&cid=YYY
+  if (id && cid && !id.startsWith('/')) attempts.push(`/drives/${encodeURIComponent(cid)}/items/${encodeURIComponent(id)}`);
+  // OneDrive / SharePoint pro, barre d'adresse : .../my?id=%2Fpersonal%2F...%2FDocuments%2FDossier
+  if (id && id.startsWith('/')) attempts.push(`/shares/${shareId(u.origin + id)}/driveItem`);
+  // Lien de partage ("Copier le lien") ou adresse directe du dossier
+  attempts.push(`/shares/${shareId(raw)}/driveItem`);
+  let lastErr = null;
+  for (const a of attempts) {
     try {
-      const pn = await parentName(top[i].f);
-      if (run !== state.suggestRun) return;
-      const el = box.querySelector(`[data-why="${i}"]`);
-      if (el && pn) el.textContent = 'dans ' + pn + ', ' + el.textContent;
-    } catch (e) { return; }
+      const it = await (await graph(a + '?' + SELECT)).json();
+      return it;
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      lastErr = e;
+    }
   }
+  throw new Error('Dossier introuvable à partir de ce lien' + (lastErr ? ' (' + lastErr.message + ')' : '') + '.');
 }
 
-function onSuggestClick(e) {
-  const b = e.target.closest('.sugg');
-  if (!b) return;
-  selectDest(state.suggestions[Number(b.dataset.i)]);
+async function openLink(raw) {
+  $('folders').innerHTML = '<li class="info">Ouverture du lien...</li>';
+  try {
+    const it = await resolveLink(raw);
+    if (!it.folder) throw new Error('Ce lien désigne un fichier, pas un dossier.');
+    const f = toFolder(it);
+    if ($('search').value.trim() !== raw) return;
+    $('search').value = '';
+    await openPath([state.root, f]);
+    selectDest(f);
+  } catch (e) {
+    handleError(e);
+    $('folders').innerHTML = '<li class="info">' + escHtml(e.message) + '</li>';
+  }
 }
 
 /* ---------- Enregistrement ---------- */
@@ -762,7 +680,6 @@ async function save() {
 
     let tagNote = '';
     if (done) {
-      remember(item, dest);
       try { await markFiled(item, dest, target); }
       catch (e) { tagNote = '<br>Fichiers enregistrés, mais le marquage dans Outlook a échoué (' + escHtml(e.message) + ').'; }
     }
@@ -797,25 +714,8 @@ async function readFiled(item) {
   }
 }
 
-async function folderLabel(dest) {
-  if (!GENERIC_FOLDERS.has(String(dest.name).toLowerCase().trim())) return dest.name;
-  let pn = '';
-  try { pn = await parentName(dest); } catch (e) { /* sans parent */ }
-  return pn ? `${pn} / ${dest.name}` : dest.name;
-}
-
-function categoryName(label) {
-  return (CAT_PREFIX + String(label).replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 80);
-}
-
-function colorFor(label) {
-  let h = 0;
-  for (const c of String(label)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return Office.MailboxEnums.CategoryColor['Preset' + (h % 25)];
-}
-
 async function markFiled(item, dest, target) {
-  const label = await folderLabel(dest);
+  const label = dest.parentName ? `${dest.parentName} / ${dest.name}` : dest.name;
   const { props, list } = await readFiled(item);
   if (props) {
     list.push({ id: dest.id, url: target.webUrl || dest.webUrl || '', name: label, date: new Date().toISOString() });
@@ -823,10 +723,10 @@ async function markFiled(item, dest, target) {
     await officeCall((cb) => props.saveAsync(cb));
   }
   if ($('optTag').checked && canTag()) {
-    const name = categoryName(label);
+    const name = CAT_NAME;
     const master = await officeCall((cb) => Office.context.mailbox.masterCategories.getAsync(cb)).catch(() => []);
     if (!(master || []).some((c) => c.displayName === name)) {
-      await officeCall((cb) => Office.context.mailbox.masterCategories.addAsync([{ displayName: name, color: colorFor(label) }], cb))
+      await officeCall((cb) => Office.context.mailbox.masterCategories.addAsync([{ displayName: name, color: Office.MailboxEnums.CategoryColor.Preset4 }], cb))
         .catch(() => { /* déjà créée ailleurs */ });
     }
     await officeCall((cb) => item.categories.addAsync([name], cb));
@@ -841,7 +741,7 @@ async function renderFiled() {
   if (!list.length && canTag()) {
     try {
       const cats = await officeCall((cb) => item.categories.getAsync(cb));
-      list = (cats || []).filter((c) => c.displayName.startsWith(CAT_PREFIX)).map((c) => ({ name: c.displayName.slice(CAT_PREFIX.length) }));
+      if ((cats || []).some((c) => c.displayName === CAT_NAME)) list = [{ name: '' }];
     } catch (e) { /* catégories illisibles */ }
   }
   if (state.item !== item) return;
@@ -854,7 +754,8 @@ async function renderFiled() {
         ? `<a href="${escHtml(e.url)}" target="_blank" rel="noopener">${escHtml(e.name)}</a>${when}`
         : `<b>${escHtml(e.name)}</b>${when}`;
     });
-  box.innerHTML = 'Déjà classé dans ' + parts.join(', ') + '.';
+  const named = parts.filter((p) => p && p !== '<b></b>');
+  box.innerHTML = named.length ? 'Déjà classé dans ' + named.join(', ') + '.' : 'Déjà classé (dossier non précisé).';
   show('filed', true);
 }
 

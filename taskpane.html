@@ -34,7 +34,7 @@
       <summary>Options</summary>
       <label class="check"><input type="checkbox" id="optPrefix" checked> <span>Préfixer les pièces jointes par la date du mail</span></label>
       <label class="check"><input type="checkbox" id="optSub"> <span>Créer un sous-dossier au nom du mail</span></label>
-      <label class="check"><input type="checkbox" id="optTag" checked> <span>Marquer le mail dans Outlook avec une catégorie au nom du dossier</span></label>
+      <label class="check"><input type="checkbox" id="optTag" checked> <span>Marquer le mail « Classé » dans Outlook</span></label>
     </details>
   </section>
 
@@ -50,8 +50,7 @@
 
   <section id="pick" class="block hidden">
     <h2>Dossier de destination</h2>
-    <div id="suggest"></div>
-    <input id="search" type="search" placeholder="Rechercher un dossier" autocomplete="off">
+    <input id="search" type="search" placeholder="Rechercher un dossier ou coller son lien OneDrive" autocomplete="off">
     <nav id="crumbs" class="crumbs"></nav>
     <ul id="folders" class="folders"></ul>
     <div id="newFolderRow" class="inline hidden">
